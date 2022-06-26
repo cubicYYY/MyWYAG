@@ -50,7 +50,7 @@ def repo_file(repo: type[GitRepository], *path: str, mkdir: bool=False)->Any:
         return repo_path(repo, *path)
 
 def repo_dir(repo: type[GitRepository], *path: str, mkdir: bool=False)->Any:
-    """Same as repo_path, but mkdir *path if absent if mkdir."""
+    """Same as repo_path, but mkdir *path if absent(if mkdir==True)."""
 
     path = repo_path(repo, *path)
 
@@ -66,7 +66,7 @@ def repo_dir(repo: type[GitRepository], *path: str, mkdir: bool=False)->Any:
     else:
         return None
        
-def repo_default_config():
+def repo_default_config()->configparser.ConfigParser:
     ret = configparser.ConfigParser()
 
     ret.add_section("core")
@@ -75,6 +75,27 @@ def repo_default_config():
     ret.set("core", "bare", "false")
 
     return ret
+
+def repo_find(path: str=".", required: bool=True):
+    path = os.path.realpath(path)
+
+    if os.path.isdir(os.path.join(path, ".git")):
+        return GitRepository(path)
+
+    # If we haven't returned, recurse in parent, if w
+    parent = os.path.realpath(os.path.join(path, ".."))
+
+    if parent == path:
+        # Bottom case
+        # os.path.join("/", "..") == "/":
+        # If parent==path, then path is root.
+        if required:
+            raise Exception("No git directory.")
+        else:
+            return None
+
+    # Recursive case
+    return repo_find(parent, required)
 
 argsp = argsubparsers.add_parser("init", help="Initialize a new, empty repository.")
 argsp.add_argument("path",
@@ -94,10 +115,10 @@ def repo_create(path):
     if os.path.exists(repo.worktree):
         if not os.path.isdir(repo.worktree):
             raise Exception ("%s is not a directory!" % path)
-        if os.listdir(repo.worktree):
-            raise Exception("%s is not empty!" % path)
+        if os.path.exists(repo.gitdir) and os.path.isdir(repo.gitdir):
+            raise Exception("%s is already a WYAG repository!" % path)
     else:
-        os.makedirs(repo.worktree)
+        os.makedirs(repo.gitdir)
 
     assert(repo_dir(repo, "branches", mkdir=True))
     assert(repo_dir(repo, "objects", mkdir=True))
