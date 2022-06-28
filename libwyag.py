@@ -5,8 +5,8 @@ import hashlib
 import os
 import re
 import sys
+from typing import Any
 import zlib
-from typing import *
 
 argparser = argparse.ArgumentParser()
 argsubparsers = argparser.add_subparsers(dest="command")
@@ -39,17 +39,18 @@ class GitRepository(object):
             vers = int(self.conf.get("core", "repositoryformatversion"))
             if vers != 0:
                 raise Exception("Unsupported repositoryformatversion %s" % vers)
+
             
-def repo_path(repo: type[GitRepository], *path: str)->Any:
+def repo_path(repo: type[GitRepository], *path: str) -> Any:
     """Compute path under repo's gitdir."""
     return os.path.join(repo.gitdir, *path)
             
-def repo_file(repo: type[GitRepository], *path: str, mkdir: bool=False)->Any:
+def repo_file(repo: type[GitRepository], *path: str, mkdir: bool=False) -> Any:
     """Same as repo_path, but create dirname(*path) if absent"""
     if repo_dir(repo, *path[:-1], mkdir=mkdir):
         return repo_path(repo, *path)
 
-def repo_dir(repo: type[GitRepository], *path: str, mkdir: bool=False)->Any:
+def repo_dir(repo: type[GitRepository], *path: str, mkdir: bool=False) -> Any:
     """Same as repo_path, but mkdir *path if absent(if mkdir==True)."""
 
     path = repo_path(repo, *path)
@@ -66,7 +67,7 @@ def repo_dir(repo: type[GitRepository], *path: str, mkdir: bool=False)->Any:
     else:
         return None
        
-def repo_default_config()->configparser.ConfigParser:
+def repo_default_config() -> configparser.ConfigParser:
     ret = configparser.ConfigParser()
 
     ret.add_section("core")
@@ -76,7 +77,7 @@ def repo_default_config()->configparser.ConfigParser:
 
     return ret
 
-def repo_find(path: str=".", required: bool=True):
+def repo_find(path: str=".", required: bool=True) -> None:
     path = os.path.realpath(path)
 
     if os.path.isdir(os.path.join(path, ".git")):
@@ -96,6 +97,87 @@ def repo_find(path: str=".", required: bool=True):
 
     # Recursive case
     return repo_find(parent, required)
+            
+class GitObject (object):
+
+    repo = None
+
+    def __init__(self, repo, data=None):
+        self.repo=repo
+
+        if data != None:
+            self.deserialize(data)
+
+    def serialize(self):
+        """This function MUST be implemented by subclasses.
+
+It must read the object's contents from self.data, a byte string, and do
+whatever it takes to convert it into a meaningful representation.  What exactly that means depend on each subclass."""
+        raise Exception("Unimplemented!")
+
+    def deserialize(self, data):
+        raise Exception("Unimplemented!")
+    
+def object_read(repo, sha):
+    """Read object object_id from Git repository repo.  Return a
+ GitObject whose exact type depends on the object."""
+
+    path = repo_file(repo, "objects", sha[0:2], sha[2:])
+    # Path example: ./.git/objects/e6/73d1b7eaa0aa01b5bc2442d570a765bdaae751
+    # File format:
+    # zlib_compress([type]<space>[length:ascii]<NUL>[content])
+    # So objects are a kind of re-package of original files
+    
+    with open (path, "rb") as f:
+        raw = zlib.decompress(f.read())
+
+        # Read object type
+        x = raw.find(b' ')
+        fmt = raw[0:x]
+
+        # Read and validate object size
+        y = raw.find(b'\x00', x)
+        size = int(raw[x:y].decode("ascii"))
+        if size != len(raw)-y-1:
+            raise Exception("Malformed object {0}: bad length".format(sha))
+
+        # Pick constructor
+        if fmt==b'blob'   : c=GitBlob
+        #   elif   fmt==b'commit' : c=GitCommit
+        # elif fmt==b'tree'   : c=GitTree
+        # elif fmt==b'tag'    : c=GitTag
+        else:
+            raise Exception("Unknown type {0} for object {1}".format(fmt.decode("ascii"), sha))
+
+        # Call constructor and return object
+        return c(repo, raw[y+1:])
+
+def object_write(obj, actually_write=True):
+    # Serialize object data
+    data = obj.serialize()
+    # Add header
+    result = obj.fmt + b' ' + str(len(data)).encode() + b'\x00' + data
+    # Compute hash
+    sha = hashlib.sha1(result).hexdigest()
+
+    if actually_write:
+        # Compute path
+        path=repo_file(obj.repo, "objects", sha[0:2], sha[2:], mkdir=actually_write)
+
+        with open(path, 'wb') as f:
+            # Compress and write
+            f.write(zlib.compress(result))
+
+    return sha
+
+class GitBlob(GitObject):
+    fmt=b'blob'
+
+    def serialize(self):
+        return self.blobdata
+
+    def deserialize(self, data):
+        self.blobdata = data
 
 argsp = argsubparsers.add_parser("init", help="Initialize a new, empty repository.")
 argsp.add_argument("path",
@@ -104,7 +186,7 @@ argsp.add_argument("path",
                    default=".",
                    help="Where to create the repository.")
 
-def repo_create(path):
+def repo_create(path) -> GitRepository:
     """Create a new repository at path."""
 
     repo = GitRepository(path, True)
@@ -139,7 +221,7 @@ def repo_create(path):
 
     return repo
             
-def main(argv: list[str] =sys.argv[1:])->None:
+def main(argv: list[str] =sys.argv[1:]) -> None:
     args = argparser.parse_args(argv)
     
     if   args.command == "add"         : cmd_add(args)
@@ -157,8 +239,8 @@ def main(argv: list[str] =sys.argv[1:])->None:
     # elif args.command == "show-ref"    : cmd_show_ref(args)
     # elif args.command == "tag"         : cmd_tag(args)
     
-def cmd_init(args)->None:
+def cmd_init(args) -> None:
     repo_create(args.path)
 
-def cmd_add(args)->None:
+def cmd_add(args) -> None:
     pass
